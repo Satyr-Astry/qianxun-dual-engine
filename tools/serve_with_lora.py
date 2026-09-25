@@ -55,6 +55,29 @@ def convert(adapter):
     print("[转换] 产物:", LORA_GGUF, os.path.exists(LORA_GGUF))
 
 
+def fingerprint():
+    """/props 指纹 + 实例数自检。
+    ★ 为什么必须做：Windows 下多个 llama-server 能同时 bind 同一端口（SO_REUSEADDR），
+      最先启动的那个一直应答 ⇒ 会出现"改了参数毫无变化""请求全被拒"的**无效测量**。
+      曾因此得到过一组假数据（scale=0.5 全失败被记成 0/6）。"""
+    import subprocess
+    out = subprocess.run(["tasklist"], capture_output=True, text=True).stdout
+    n = sum(1 for l in out.splitlines() if "llama-server" in l)
+    try:
+        d = json.loads(urllib.request.urlopen(BASE + "/props", timeout=20).read().decode("utf-8"))
+        ct = d.get("chat_template") or ""
+        nx = d.get("default_generation_settings", {}).get("n_ctx")
+        print(f"[自检] 实例数={n}（应为 1）｜n_ctx={nx}（应为 65536）｜模板 {len(ct)} 字符"
+              f"｜含工具段={'You may call one or more functions' in ct}", flush=True)
+        if n != 1 or nx != 65536:
+            print("[自检] ⚠️ 指纹异常：可能是残留实例在应答，本次测量不可信", flush=True)
+            return False
+        return True
+    except Exception as e:
+        print(f"[自检] /props 取不到（{type(e).__name__}）⇒ 服务未就绪，测量无效", flush=True)
+        return False
+
+
 def set_scale(scale):
     """运行时改 LoRA 强度（免重启）。
     ★ 为什么不用命令行 --lora-scaled：它按**第一个冒号**切 FNAME:SCALE，
@@ -81,11 +104,14 @@ def start(lora=True, scale=1.0):
     for _ in range(60):
         try:
             if urllib.request.urlopen(BASE + "/health", timeout=10).status == 200:
-                print(f"[就绪] {time.time()-t0:.0f}s"); return True
+                print(f"[就绪] {time.time()-t0:.0f}s", flush=True)
+                fingerprint()          # ★ 就绪后先验明正身，再谈测试
+                return True
         except Exception:
             pass
         time.sleep(8)
-    print("[未就绪]"); return False
+    print("[未就绪] ⇒ 本次测量无效（不要把它记成数据点）", flush=True)
+    return False
 
 
 def test():
