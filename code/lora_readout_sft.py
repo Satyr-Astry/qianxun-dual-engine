@@ -228,9 +228,25 @@ def stage_cache(a):
 
 
 # ══ stage train ═══════════════════════════════════════════════════════════════
+def _is_positive(f, tok):
+    """从缓存里判断这条是不是"含 tool_call 的正例"（不用另存元数据：直接解码 mask 片段看标签）"""
+    z = np.load(f)
+    ids, m = z["ids"], z["mask"]
+    sel = [int(i) for i, k in zip(ids, m) if k]
+    txt = tok.decode(sel)
+    return "<tool_call>" in txt
+
+
 def stage_train(a):
-    from transformers import AutoConfig
+    from transformers import AutoConfig, AutoTokenizer
     files = sorted(glob.glob(os.path.join(WORK, "h", "*.npz")))
+    if getattr(a, "positives_only", False):
+        # ★ 只训正例：负例会把模型教成"极短回答 + 停不下来"（退化重复），
+        #   而"误触发工具"本来就不是问题（训练前基线误触发也是 0）
+        tok = AutoTokenizer.from_pretrained(MODEL_DIR)
+        kept = [f for f in files if _is_positive(f, tok)]
+        print(f"[train] positives-only：{len(files)} → {len(kept)} 条（丢掉 {len(files)-len(kept)} 条负例）", flush=True)
+        files = kept
     rnd = random.Random(0)
     held = set(rnd.sample(range(len(files)), max(20, len(files) // 10)))
     train_f = [f for i, f in enumerate(files) if i not in held]
@@ -321,6 +337,8 @@ if __name__ == "__main__":
     ap.add_argument("--batch-items", type=int, default=4, dest="batch_items")
     ap.add_argument("--lora-r", type=int, default=16, dest="lora_r")
     ap.add_argument("--steps", type=int, default=1200)
+    ap.add_argument("--positives-only", action="store_true", dest="positives_only",
+                    help="只训含 <tool_call> 的正例（治『停不下来』的退化重复）")
     ap.add_argument("--lr", type=float, default=2e-4)
     a = ap.parse_args()
     {"cache": stage_cache, "train": stage_train, "eval": stage_eval}[a.stage](a)
