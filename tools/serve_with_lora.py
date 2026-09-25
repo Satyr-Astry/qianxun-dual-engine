@@ -55,6 +55,17 @@ def convert(adapter):
     print("[转换] 产物:", LORA_GGUF, os.path.exists(LORA_GGUF))
 
 
+def set_scale(scale):
+    """运行时改 LoRA 强度（免重启）。
+    ★ 为什么不用命令行 --lora-scaled：它按**第一个冒号**切 FNAME:SCALE，
+      而 Windows 路径的盘符 E: 就是这个冒号 ⇒ 直接报 lora-scaled format: FNAME:SCALE"""
+    data = json.dumps([{"id": 0, "scale": scale}]).encode()
+    req = urllib.request.Request(BASE + "/lora-adapters", data=data,
+                                 headers={"Content-Type": "application/json"}, method="POST")
+    with urllib.request.urlopen(req, timeout=30) as r:
+        print(f"[强度] scale={scale} → {r.status} {r.read()[:120].decode('utf-8','replace')}", flush=True)
+
+
 def start(lora=True, scale=1.0):
     subprocess.run(["taskkill", "/F", "/IM", "llama-server.exe"], capture_output=True)
     time.sleep(3)
@@ -63,9 +74,8 @@ def start(lora=True, scale=1.0):
             "--chat-template-file", "E:/models/qwen25_tools.jinja",
             "--host", "127.0.0.1", "--port", str(PORT), "-a", "r1-14b-local"]
     if lora and os.path.exists(LORA_GGUF):
-        # ★ 用 --lora-scaled 控制强度：1.0 会把非工具回答训到退化重复（小数据过拟合）
-        args += ["--lora-scaled", f"{LORA_GGUF}:{scale}"]
-    print(f"[启动] LoRA scale={scale}", flush=True)
+        args += ["--lora", LORA_GGUF]          # 普通加载（路径无冒号问题），强度后面用 API 调
+    print(f"[启动] LoRA={'on' if lora else 'off'}", flush=True)
     subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     t0 = time.time()
     for _ in range(60):
@@ -109,12 +119,24 @@ if __name__ == "__main__":
     ap.add_argument("--convert", action="store_true")
     ap.add_argument("--start", action="store_true")
     ap.add_argument("--no-lora", action="store_true")
-    ap.add_argument("--scale", type=float, default=1.0, help="LoRA 强度（1.0=满强度；小数据过拟合时降到 0.5~0.7）")
+    ap.add_argument("--scale", type=float, default=1.0, help="LoRA 强度（运行时经 /lora-adapters 设置）")
+    ap.add_argument("--sweep", default="", help="逗号分隔的强度列表，例如 0.5,0.7,1.0（一次启动连续测）")
     ap.add_argument("--test", action="store_true")
     a = ap.parse_args()
     if a.convert:
         convert(a.adapter)
     if a.start:
         start(lora=not a.no_lora, scale=a.scale)
-    if a.test:
+        if a.sweep:
+            for s in [float(x) for x in a.sweep.split(",") if x.strip()]:
+                print(f"\n############ LoRA scale={s} ############", flush=True)
+                set_scale(s)
+                test()
+        elif a.test:
+            set_scale(a.scale)
+            test()
+        elif a.scale != 1.0:
+            set_scale(a.scale)
+    elif a.test:
+        set_scale(a.scale)
         test()
