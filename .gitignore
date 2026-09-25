@@ -1,0 +1,29 @@
+# 模型权重与数据（体积大，不入库；按 README 的“快速开始”自行生成/下载）
+*.gguf
+*.safetensors
+*.bin
+*.pt
+*.npz
+*.npy
+models/
+hidden/
+adapter/
+data/
+
+# 运行产物
+__pycache__/
+*.pyc
+*.log
+bench/
+*.tmp
+
+# 环境
+venv/
+.venv/
+.env
+
+# 编辑器
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
